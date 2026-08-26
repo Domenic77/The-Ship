@@ -1,34 +1,78 @@
-const IP = process.argv[2];
-const BUY = "Azura Station";   
-const SELL = "Core Station";  
+const IP = "192.168.101.10";
+const BUY = "Azura Station";
+const SELL = "Core Station";
 
-const api = (port: number, path: string, body?: object) =>
-  fetch(`http://${IP}:${port}/${path}`,
-    body ? { method: "POST", body: JSON.stringify(body) } : undefined)
-    .then(r => r.json() as any);
+function warte() {
+  return new Promise(r => setTimeout(r, 1000));
+}
 
-async function fly(station: string) {
-  await api(2009, "set_target", { target: station });
-  let s;
-  while (!(s = (await api(2011, "stations_in_reach")).stations[station]))
-    await new Promise(r => setTimeout(r, 1000));
-  return s;
+async function get(port: number, pfad: string) {
+  const antwort = await fetch(`http://${IP}:${port}/${pfad}`);
+  return await antwort.json() as any;
+}
+
+async function post(port: number, pfad: string, daten: object) {
+  const antwort = await fetch(`http://${IP}:${port}/${pfad}`, {
+    method: "POST",
+    body: JSON.stringify(daten)
+  });
+  return await antwort.json() as any;
+}
+
+async function fliegeZu(station: string) {
+  await post(2009, "set_target", { target: station });
+
+  while (true) {
+    const antwort = await get(2011, "stations_in_reach");
+    const gefunden = antwort.stations[station];
+
+    if (gefunden) {
+      return gefunden;
+    }
+
+    await warte();
+  }
+}
+
+async function ladeRaum() {
+  const antwort = await get(2012, "hold");
+  return antwort.hold;
 }
 
 async function main() {
   while (true) {
-    const price = (await fly(BUY)).resources.IRON.buy_price;
-    let { credits, hold_free } = (await api(2012, "hold")).hold;
-    const amount = price ? Math.min(hold_free, Math.floor(credits / price)) : hold_free;
-    if (amount > 0) await api(2011, "buy", { station: BUY, what: "IRON", amount });
+    const station = await fliegeZu(BUY);
+    const preis = station.resources.IRON.buy_price;
 
-    const hold = (await api(2012, "hold")).hold;
-    if (hold.hold_free === 0) break;
+    const vorher = await ladeRaum();
+    let menge = vorher.hold_free;
 
-    await fly(SELL);
-    await api(2011, "sell", { station: SELL, what: "IRON", amount: hold.resources.IRON });
+    if (preis > 0) {
+      const bezahlbar = Math.floor(vorher.credits / preis);
+
+      if (bezahlbar < menge) {
+        menge = bezahlbar;
+      }
+    }
+
+    if (menge > 0) {
+      await post(2011, "buy", { station: BUY, what: "IRON", amount: menge });
+    }
+
+    const nachher = await ladeRaum();
+    const eisen = nachher.resources.IRON || 0;
+    console.log(`Eisen: ${eisen}, Credits: ${nachher.credits}`);
+
+    if (nachher.hold_free === 0) {
+      break;
+    }
+
+    await fliegeZu(SELL);
+    await post(2011, "sell", { station: SELL, what: "IRON", amount: eisen });
   }
-  await api(2009, "set_target", { target: { x: 7000, y: 7000 } });
+
+  console.log("Laderaum voll, fliege nach Vesta Station");
+  await post(2009, "set_target", { target: { x: 7000, y: 7000 } });
 }
 
 main();
