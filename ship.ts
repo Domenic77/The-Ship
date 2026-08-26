@@ -25,7 +25,7 @@ async function fliegeZu(station: string) {
   while (true) {
     const antwort = await get(2011, "stations_in_reach");
     const gefunden = antwort.stations[station];
-
+    
     if (gefunden) {
       return gefunden;
     }
