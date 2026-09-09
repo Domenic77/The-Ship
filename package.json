@@ -18,9 +18,11 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "tsx": "^4.23.12"
+    "tsx": "^4.23.12",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@types/node": "^26.3.0"
+    "@types/node": "^26.3.0",
+    "@types/ws": "^8.18.1"
   }
 }
