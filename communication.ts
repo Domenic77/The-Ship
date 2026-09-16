@@ -1,99 +1,128 @@
 import http from "node:http";
 import WebSocket from "ws";
 
-const IP = "192.168.101.11";
-const MEINE_STATION = "Shangris Station";
-const MODUL = "ws://192.168.101.11:2025/ws";
-const PARTNER = "http://192.168.101.10:5000";
-const MEIN_PORT = 5000;
+const IP = "192.168.101.10";
+const PARTNER = "http://192.168.101.11:5000";
+const STATION = "Elyse Terminal";
 
 let ws: WebSocket;
-let takt: NodeJS.Timeout;
 
-async function fliegeZurStation() {
-  await fetch(`http://${IP}:2009/set_target`, {
-    method: "POST",
-    body: JSON.stringify({ target: MEINE_STATION })
+function warten(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function api(port: number, path: string, data?: any) {
+  const response = await fetch(`http://${IP}:${port}${path}`, {
+    method: data ? "POST" : "GET",
+    headers: data ? { "Content-Type": "application/json" } : undefined,
+    body: data ? JSON.stringify(data) : undefined
   });
-  console.log("fliege zu " + MEINE_STATION);
+
+  return await response.json() as any;
 }
 
-function zeigePosition() {
-  setInterval(async () => {
-    const antwort = await fetch(`http://${IP}:2010/pos`);
-    const daten = await antwort.json() as any;
-    console.log(`Position: ${daten.pos.x} / ${daten.pos.y}`);
-  }, 10000);
-}
+async function fliegen() {
+  console.log("Fliege zu Elyse...");
 
-function verbinde() {
-  ws = new WebSocket(MODUL);
+  await api(2009, "/set_target", {
+    target: { x: -70565, y: 72811 }
+  });
 
-  ws.onopen = () => {
-    console.log("verbunden mit " + MEINE_STATION);
+  while (true) {
+    const response = await api(2011, "/stations_in_reach");
 
-    takt = setInterval(() => {
-      const start = { source: MEINE_STATION, data: [1, 2, 3] };
-      console.log("ich -> Station:", JSON.stringify(start));
-      ws.send(JSON.stringify(start));
-    }, 3000);
-  };
-
-  ws.onmessage = async (event) => {
-    const nachricht = JSON.parse(event.data);
-    console.log("Station -> ich:", event.data);
-
-    // Shangris nennt das Feld "data", Domenics Seite erwartet "msg"
-    const weiterleitung = { source: MEINE_STATION, msg: nachricht.data };
-
-    try {
-      await fetch(PARTNER, {
-        method: "POST",
-        body: JSON.stringify(weiterleitung)
-      });
-    } catch (fehler) {
-      console.log("Partner nicht erreichbar");
+    if (response.stations?.[STATION]) {
+      break;
     }
-  };
 
-  ws.onclose = () => {
-    console.log("noch nicht in Reichweite, neuer Versuch in 5s");
-    clearInterval(takt);
-    setTimeout(verbinde, 5000);
-  };
+    await warten(1000);
+  }
 
-  ws.onerror = () => {
-    // Fehler fuehrt immer zu onclose, dort wird neu verbunden
-  };
-}
-
-const server = http.createServer((anfrage, antwort) => {
-  let text = "";
-
-  anfrage.on("data", (stueck) => {
-    text = text + stueck;
+  await api(2009, "/set_target", {
+    target: "stop"
   });
 
-  anfrage.on("end", () => {
-    console.log("Partner -> ich:", text);
+  console.log("Elyse erreicht");
+}
 
-    // Domenics "msg" zurueck auf "data" fuer Shangris
-    const vonPartner = JSON.parse(text);
-    const fuerModul = { source: vonPartner.source, data: vonPartner.msg };
+async function sendeAnPartner(message: any) {
+  try {
+    await fetch(`${PARTNER}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(message)
+    });
+
+    console.log("Elyse -> Shangris");
+  } catch {
+    console.log("Partner nicht erreichbar");
+  }
+}
+
+function verbindeWebSocket() {
+  ws = new WebSocket(
+    "ws://192.168.101.10:2026/api"
+  );
+
+  ws.on("open", () => {
+    console.log("Elyse verbunden");
+  });
+
+  ws.on("message", async data => {
+    const message = JSON.parse(
+      data.toString()
+    );
+
+    await sendeAnPartner(message);
+  });
+}
+
+http.createServer((req, res) => {
+  if (
+    req.method !== "POST" ||
+    req.url !== "/message"
+  ) {
+    res.statusCode = 404;
+    return res.end();
+  }
+
+  let body = "";
+
+  req.on("data", chunk => {
+    body += chunk;
+  });
+
+  req.on("end", () => {
+    const message = JSON.parse(body);
+
+    const fuerElyse = {
+      source: "Shangris Station",
+      msg: message.data ?? message.msg
+    };
 
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(fuerModul));
+      ws.send(
+        JSON.stringify(fuerElyse)
+      );
+
+      console.log("Shangris -> Elyse");
+      res.end("ok");
     } else {
-      console.log("Modul nicht verbunden, Nachricht verworfen");
+      res.statusCode = 503;
+      res.end("WebSocket nicht bereit");
     }
-
-    antwort.end("ok");
   });
-});
 
-server.listen(MEIN_PORT);
-console.log("höre auf Port " + MEIN_PORT);
+}).listen(5000, "0.0.0.0");
 
-fliegeZurStation();
-zeigePosition();
-verbinde();
+async function main() {
+  console.log("HTTP Server Port 5000");
+
+  await fliegen();
+
+  verbindeWebSocket();
+}
+
+main();
