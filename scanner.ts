@@ -18,7 +18,7 @@ await kanal.bindQueue(briefkasten.queue, "scanner/detected_objects", "");
 console.log("Scanner verbunden, warte auf G-Station 1-1...");
 
 kanal.consume(briefkasten.queue, function (post) {
-  const objekte = JSON.parse(post!.content.toString());
+  const objekte = JSON.parse(post.content.toString());
 
   for (const objekt of objekte) {
     if (objekt.name === "G-Station 1-1") {
